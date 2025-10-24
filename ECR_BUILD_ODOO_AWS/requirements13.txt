@@ -1,0 +1,8 @@
+pyOpenSSL==24.2.1
+numpy==1.24.4
+qrcode==7.4.2
+reportlab==4.2.5
+pycairo==1.26.1
+WooCommerce==3.0.0
+PyMySQL==1.1.1
+rl-renderPM==4.0.3

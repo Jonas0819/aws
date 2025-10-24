@@ -1,0 +1,135 @@
+{
+"AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Crear alarmas para CloudWatch",
+    "Parameters": {
+      "EnvName": {
+         "Type": "String",
+          "Description": "Prefijo para recursos"
+      },
+      "EmailSNS": {
+          "Description": "correo electronico donde se enviaran alertas.",
+          "Type": "String",
+          "AllowedPattern": "^[\\x20-\\x45]?[\\w-\\+]+(\\.[\\w]+)*@[\\w-]+(\\.[\\w]+)*(\\.[a-z]{2,})$",
+          "ConstraintDescription": "must be a valid email address"
+        
+      }
+    },
+    "Resources": {  
+      "snsTopic": {
+        "Type": "AWS::SNS::Topic",
+        "Properties": {
+          "Subscription": [
+            {
+              "Endpoint" : {"Ref":"EmailSNS"},
+              "Protocol" : "email"
+            }
+          ],
+          "TopicName": {"Fn::Sub": "${EnvName}-Topic-Alarms-Metrics"}
+        }
+      },
+      "RDSCpuAlarm": {
+        "Type": "AWS::CloudWatch::Alarm",
+        "DependsOn": "snsTopic",
+        "Properties": {
+          "AlarmDescription": "Alarma para la utilizacion de las CPU",
+          "AlarmName": {"Fn::Sub": "${EnvName}-CPU-Utilizacion-Alta-Average"},
+          "Namespace": "AWS/RDS",
+          "MetricName": "CPUUtilization",
+          "Statistic": "Average",
+          "Period": 60,
+          "Threshold": 85,
+          "ComparisonOperator": "GreaterThanThreshold",
+          "EvaluationPeriods": 3,
+          "AlarmActions": [
+            { 
+              "Ref": "snsTopic"
+            }
+          ]
+        }
+      },
+      "RDSFreeMemoryAlarm": {
+        "Type": "AWS::CloudWatch::Alarm",
+        "DependsOn": "snsTopic",
+        "Properties": {
+          "AlarmDescription": "Alarma para el espacio disponible en Memoria RDS",
+          "AlarmName": {"Fn::Sub": "${EnvName}-FreaableMemory-Baja-Maximum"},
+          "Namespace": "AWS/RDS",
+          "MetricName": "FreeableMemory",
+          "Statistic": "Maximum",
+          "Period": 60,
+          "Threshold": 250000000,
+          "ComparisonOperator": "LessThanThreshold",
+          "EvaluationPeriods": 3,
+          "AlarmActions": [
+            { 
+              "Ref": "snsTopic"
+            }
+          ]
+        }
+      },
+      "RDSFreeSwapUsageAlarm": {
+        "Type": "AWS::CloudWatch::Alarm",
+        "DependsOn": "snsTopic",
+        "Properties": {
+          "AlarmDescription": "Alarma para el espacio de intercambio Memoria RAM Fisica",
+          "AlarmName": {"Fn::Sub": "${EnvName}-SwapUsage-Alta-Maximum"},
+          "Namespace": "AWS/RDS",
+          "MetricName": "SwapUsage",
+          "Statistic": "Maximum",
+          "Period": 60,
+          "Threshold": 250000000,
+          "ComparisonOperator": "GreaterThanThreshold",
+          "EvaluationPeriods": 3,
+          "AlarmActions": [
+            { 
+              "Ref": "snsTopic"
+            }
+          ]
+        }
+      },
+      "RDSFreeStorageSpaceAlarm": {
+        "Type": "AWS::CloudWatch::Alarm",
+        "DependsOn": "snsTopic",
+        "Properties": {
+          "AlarmDescription": "Alarma para el espacio disponible en el almacenamiento RDS",
+          "AlarmName": {"Fn::Sub": "${EnvName}-FreeStorageSpace-Baja-Maximum"},
+          "Namespace": "AWS/RDS",
+          "MetricName": "FreeStorageSpace",
+          "Statistic": "Maximum",
+          "Period": 60,
+          "Threshold": 1000000000,
+          "ComparisonOperator": "LessThanThreshold",
+          "EvaluationPeriods": 3,
+          "AlarmActions": [
+            { 
+              "Ref": "snsTopic"
+            }
+          ]
+        }
+      }
+
+    },
+    "Outputs": {
+        "snstopic":{
+          "Description" : "Arn del topic snstopic",
+          "Value" : {"Ref":"snsTopic"}
+        },
+        "RDSCpuAlarm":{
+          "Description" : "Nombre de la alarma RDSCpuAlarm",
+          "Value" : {"Ref":"RDSCpuAlarm"}
+        },
+        "RDSFreeMemoryAlarm":{
+          "Description" : "Nombre de la alarma RDSFreeMemoryAlarm",
+          "Value" : {"Ref":"RDSFreeMemoryAlarm"}
+        },
+        "RDSFreeSwapUsageAlarm":{
+          "Description" : "Nombre de la alarma RDSFreeSwapUsageAlarm",
+          "Value" : {"Ref":"RDSFreeSwapUsageAlarm"}
+        },
+        "RDSFreeStorageSpaceAlarm":{
+          "Description" : "Nombre de la alarma RDSFreeStorageSpaceAlarm",
+          "Value" : {"Ref":"RDSFreeStorageSpaceAlarm"}
+        }
+
+    }
+}

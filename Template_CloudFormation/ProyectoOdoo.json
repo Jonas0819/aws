@@ -1,0 +1,1990 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Infraestructura base para Odoo con AWS Fargate cluster",
+  "Parameters": {
+    "NombreProyectoEmpresa": {
+      "Type": "String",
+      "Description": "Nombre del proyecto o empresa"
+    },
+    "DBUsername": {
+      "Description": "Username for PostgreSQL database access",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric character"
+    },
+    "DBPassword": {
+      "Description": "Password for PostgreSQL database access",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "NoEcho": true,
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "ConstraintDescription": "must contain only alphanumeric characters."
+    },
+    "DBName": {
+      "Description": "PostgreSQL Odoo database name",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric character"
+    },
+    "DatabaseInstanceType": {
+      "Default": "db.t4g.micro",
+      "Description": "The instance type to use for the database.",
+      "Type": "String"
+    },
+    "RDSMultiAZ": {
+      "Description": "Type true or false ",
+      "Default": "false",
+      "Type": "String",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "VpcCidrBlock": {
+      "Type": "String",
+      "Default": "10.9.0.0/16"
+    },
+    "PrivateSubnetACidrBlock": {
+      "Type": "String",
+      "Default": "10.9.1.0/24"
+    },
+    "PrivateSubnetBCidrBlock": {
+      "Type": "String",
+      "Default": "10.9.2.0/24"
+    },
+    "PublicSubnetACidrBlock": {
+      "Type": "String",
+      "Default": "10.9.3.0/24"
+    },
+    "PublicSubnetBCidrBlock": {
+      "Type": "String",
+      "Default": "10.9.4.0/24"
+    },
+    "ECSDesiredCount": {
+      "Type": "Number",
+      "Default": 1,
+      "Description": "Numero de tareas por servicio"
+    },
+    "ECSTaskCPU": {
+      "Type": "Number",
+      "Default": 1024
+    },
+    "ECSTaskRAM": {
+      "Type": "String",
+      "Default": "2GB"
+    },
+    "MinContainers": {
+      "Type": "Number",
+      "Default": 1
+    },
+    "MaxContainers": {
+      "Type": "Number",
+      "Default": 2
+    },
+    "AutoScalingTargetValue": {
+      "Type": "Number",
+      "Default": 70
+    },
+    "GitHubRepoIdDockerOdooECR": {
+      "Type": "String",
+      "Default": "lytics-mx/ECR_BUILD_ODOO_AWS",
+      "Description": "GitHub repositorynameId DockerOdooECR"
+    },
+    "GitHubBranchDockerOdooECR": {
+      "Type": "String",
+      "Default": "main",
+      "Description": "Branch to build from DockerOdooECR"
+    },
+    "GitHubRepoIdAddonsOdoo": {
+      "Type": "String",
+      "Default": "some-user/my-repo-addons-odoo",
+      "Description": "Branch to build from AddonsOdoo"
+    },
+    "GitHubBranchAddonsOdoo": {
+      "Type": "String",
+      "Default": "main",
+      "Description": "Branch to build from AddonsOdoo"
+    },
+    "DockerHubName": {
+      "Type": "String",
+      "Default": "ryemx",
+      "Description": "Username dockerhub"
+    },
+    "DockerhubPassword": {
+      "Type": "String",
+      "Default": "Burlpen61",
+      "NoEcho": true,
+      "Description": "Password dockerhub"
+    },
+    "OdooVersion": {
+      "Type": "String",
+      "Default": "18.0",
+      "Description": "Odoo version",
+      "AllowedValues": ["13.0", "14.0", "15.0", "16.0", "17.0", "18.0", "19.0"],
+      "ConstraintDescription": "Must be a valid Odoo version."
+    },
+    "OdooRelease": {
+      "Type": "String",
+      "Default": "latest",
+      "Description": "Release Odoo"
+    },
+    "OdooEdition": {
+      "Type": "String",
+      "Default": "community",
+      "Description": "Odoo edition",
+      "AllowedValues": ["community", "enterprise"],
+      "ConstraintDescription": "Must be either Community or Enterprise."
+    },
+     "EnableRDSProxy": {
+      "Type": "String",
+      "AllowedValues": ["true", "false"],
+      "Default": "false",
+      "Description": "Create the RDS Proxy? true/false"
+    },
+     "ImageDefaultECR": {
+      "Type": "String",
+      "Default": "public.ecr.aws/i9s0h5u5/odoo16-enterprise-lytics:latest",
+      "Description": "Image URI ECR Default"
+    }
+
+  },
+
+  "Conditions": {
+    "UseRDSProxy": {
+      "Fn::Equals": [
+        { "Ref": "EnableRDSProxy" },
+        "true"
+      ]
+    }
+  },
+
+  "Resources": {
+    "DBSecretPwdOdoo": {
+        "Type": "AWS::SecretsManager::Secret",
+        "Properties": {
+          "Name": {
+            "Fn::Sub": "${NombreProyectoEmpresa}-odoo-pwdsecret-${OdooEdition}"
+          },
+          "SecretString": {
+            "Ref": "DBPassword"
+          }
+        }
+      },
+
+     "MyECRRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-odoo-${OdooVersion}-${OdooEdition}"
+        }
+      }
+    },
+     "MyConnectionGitDockerECR": {
+      "Type": "AWS::CodeStarConnections::Connection",
+      "Properties": {
+        "ConnectionName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-ecr-git"
+        },
+        "ProviderType": "GitHub"
+      }
+    },
+    "MyConnectionGitAddons": {
+      "Type": "AWS::CodeStarConnections::Connection",
+      "Properties": {
+        "ConnectionName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-addons-git"
+        },
+        "ProviderType": "GitHub"
+      }
+    },
+
+    "CodeBuildServiceRoleDockerECROdoo": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codebuild.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess",
+          "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+          "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+        ]
+      }
+    },
+    
+     "CodePipelineServiceRoleDockerECR": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codepipeline.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess",
+          "arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess",
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+          "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "AllowCodeStarConnection",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["codestar-connections:UseConnection"],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+   
+    "PipelineArtifactBucketDockerOdooECR": {
+      "Type": "AWS::S3::Bucket"
+    },
+    "PipelineArtifactBucketAddonsOdoo": {
+      "Type": "AWS::S3::Bucket"
+    },
+     "NATGatewayEIPEFS": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc"
+      }
+    },
+    "OdooTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+        "NetworkMode": "awsvpc",
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "Cpu": {
+          "Ref": "ECSTaskCPU"
+        },
+        "Memory": {
+          "Ref": "ECSTaskRAM"
+        },
+        "ExecutionRoleArn": {
+          "Ref": "ECSTaskExecutionRole"
+        },
+        "TaskRoleArn": {
+          "Ref": "ECSTaskExecutionRole"
+        },
+        "Volumes": [
+          {
+            "Name": "EFSGitHubCodigo",
+            "EFSVolumeConfiguration": {
+              "FilesystemId": {
+                "Ref": "FileSystemResource"
+              },
+              "AuthorizationConfig": {
+                "AccessPointId": {
+                  "Ref": "EFSAccesPointCodigo"
+                }
+              },
+              "TransitEncryption": "ENABLED"
+            }
+          },
+          {
+            "Name": "EFSGitHubDatos",
+            "EFSVolumeConfiguration": {
+              "FilesystemId": {
+                "Ref": "FileSystemResource"
+              },
+              "AuthorizationConfig": {
+                "AccessPointId": {
+                  "Ref": "EFSAccesPointDatos"
+                }
+              },
+              "TransitEncryption": "ENABLED"
+            }
+          },
+          {
+            "Name": "EFSGithubConfig",
+            "EFSVolumeConfiguration": {
+              "FilesystemId": {
+                "Ref": "FileSystemResource"
+              },
+              "AuthorizationConfig": {
+                "AccessPointId": {
+                  "Ref": "EFSAccesPointConfig"
+                }
+              },
+              "TransitEncryption": "ENABLED"
+            }
+          }
+        ],
+        "ContainerDefinitions": [
+          {
+            "Name": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+            "Image": { "Ref": "ImageDefaultECR" },
+            "MountPoints": [
+              {
+                "SourceVolume": "EFSGitHubCodigo",
+                "ContainerPath": "/mnt/extra-addons"
+              },
+              {
+                "SourceVolume": "EFSGitHubDatos",
+                "ContainerPath": "/var/lib/odoo"
+              },
+              {
+                "SourceVolume": "EFSGithubConfig",
+                "ContainerPath": "/etc/odoo"
+              }
+            ],
+            "Secrets":[
+              {
+                "Name" : "PASSWORD",
+                "ValueFrom" : { "Ref": "DBSecretPwdOdoo" }
+              }
+            ],
+            "Environment": [
+             {
+               "Name": "HOST",
+               "Value": {
+                "Fn::If": [
+                  "UseRDSProxy",
+                  { "Fn::GetAtt": ["MyRDSProxy", "Endpoint"] },
+                  { "Fn::GetAtt": ["RDSInstance", "Endpoint.Address"] }
+                ]
+                }
+               },
+              {
+                "Name": "PORT",
+                "Value": "5432"
+              },
+              {
+                "Name": "FILTER",
+                "Value": {
+                  "Ref": "DBName"
+                }
+              },
+              {
+                "Name": "USER",
+                "Value": {
+                  "Ref": "DBUsername"
+                }
+              }
+            ],
+            "PortMappings": [
+              {
+                "ContainerPort": 8069,
+                "HostPort": 8069
+              },
+               {
+                "ContainerPort": 8072,
+                "HostPort": 8072
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-group": {
+                  "Ref": "OdooLogGroup"
+                },
+                "awslogs-stream-prefix": "ecs"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "OdooLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Join": [
+            "",
+            [
+              "/ecs/",
+              { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" }
+            ]
+          ]
+        }
+      }
+    },
+    "AutoScalingTarget": {
+      "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+      "DependsOn": "GenericService",
+      "Properties": {
+        "MinCapacity": {
+          "Ref": "MinContainers"
+        },
+        "MaxCapacity": {
+          "Ref": "MaxContainers"
+        },
+        "ResourceId": {
+          "Fn::Join": [
+            "/",
+            [
+              "service",
+              {
+                "Ref": "FargateCluster"
+              },
+              {
+                "Fn::GetAtt": "GenericService.Name"
+              }
+            ]
+          ]
+        },
+        "ScalableDimension": "ecs:service:DesiredCount",
+        "ServiceNamespace": "ecs",
+        "RoleARN": {
+          "Fn::GetAtt": [
+            "AutoScalingRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "AutoScalingPolicy": {
+      "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+      "Properties": {
+        "PolicyName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-AutoScalingPolicy"
+        },
+        "PolicyType": "TargetTrackingScaling",
+        "ScalingTargetId": {
+          "Ref": "AutoScalingTarget"
+        },
+        "TargetTrackingScalingPolicyConfiguration": {
+          "PredefinedMetricSpecification": {
+            "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
+          },
+          "ScaleInCooldown": 900,
+          "ScaleOutCooldown": 30,
+          "TargetValue": {
+            "Ref": "AutoScalingTargetValue"
+          }
+        }
+      }
+    },
+    "ECSTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "DependsOn": "ApplicationLoadBalancer",
+      "Properties": {
+        "HealthCheckIntervalSeconds": 300,
+        "HealthCheckPath": "/",
+        "HealthCheckPort": "traffic-port",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckTimeoutSeconds": "120",
+        "HealthyThresholdCount": 2,
+        "IpAddressType": "ipv4",
+        "Name": { "Fn::Sub": "${NombreProyectoEmpresa}-odoo-${OdooEdition}-8069" },
+        "Port": "8069",
+        "Protocol": "HTTP",
+        "Matcher": {
+          "HttpCode": "200-299,303"
+        },
+        "TargetType": "ip",
+        "UnhealthyThresholdCount": 5,
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+  "ECSTargetGroupLongPolling": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "DependsOn": "ApplicationLoadBalancer",
+      "Properties": {
+        "HealthCheckIntervalSeconds": 300,
+        "HealthCheckPath": "/web/database/selector",
+        "HealthCheckPort": "traffic-port",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckTimeoutSeconds": "120",
+        "HealthyThresholdCount": 2,
+        "IpAddressType": "ipv4",
+        "Name": { "Fn::Sub": "${NombreProyectoEmpresa}-odoo-${OdooEdition}-8072" },
+        "Port": "8072",
+        "Protocol": "HTTP",
+        "Matcher": {
+          "HttpCode": "200-299,303"
+        },
+        "TargetType": "ip",
+        "UnhealthyThresholdCount": 5,
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "GenericService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+        "Cluster": {
+          "Ref": "FargateCluster"
+        },
+        "DeploymentConfiguration" : {
+          "DeploymentCircuitBreaker" : {
+              "Enable" : true,
+              "Rollback" : true
+          }
+        },
+        "EnableExecuteCommand" : true,
+        "DesiredCount": {
+          "Ref": "ECSDesiredCount"
+        },
+        "LoadBalancers": [
+            {
+              "ContainerName": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+              "ContainerPort": 8069,
+              "TargetGroupArn": {
+                "Ref": "ECSTargetGroup"
+              }
+            },
+             {
+              "ContainerName": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+              "ContainerPort": 8072,
+              "TargetGroupArn": {
+                "Ref": "ECSTargetGroupLongPolling"
+              }
+            }
+        ],
+        "TaskDefinition": {
+          "Ref": "OdooTaskDefinition"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [
+              {
+                "Ref": "PublicSubnetB"
+              },
+              {
+                "Ref": "PublicSubnetA"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "ContainerSecurityGroup"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "LoadBalancerListener80": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "ECSTargetGroup"
+            }
+          }
+        ],
+        "LoadBalancerArn": {
+          "Ref": "ApplicationLoadBalancer"
+        },
+        "Port": 80,
+        "Protocol": "HTTP"
+      }
+    },
+    "LoadBalancerListenerRuleLongPolling":{
+      "Type" : "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties" : {
+          "Actions" : [ 
+            {
+              "Type": "forward",
+              "TargetGroupArn": {
+                "Ref": "ECSTargetGroupLongPolling"
+              }
+            }
+           ],
+          "Conditions" : [ 
+              {
+              "Field": "path-pattern",
+              "Values": [
+                "/websocket",
+                "/longpolling"
+              ]
+            }
+           ],
+          "ListenerArn" : {
+            "Ref": "LoadBalancerListener80"
+          },
+          "Priority" : 1
+        }
+    },
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "VpcCidrBlock"
+        },
+        "EnableDnsSupport": "true",
+        "EnableDnsHostnames": "true",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": { "Fn::Sub": "${NombreProyectoEmpresa}-vpc-odoo-${OdooEdition}" }
+          }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": { "Fn::Sub": "${NombreProyectoEmpresa}-igw-odoo-${OdooEdition}" }
+          }
+        ]
+      }
+    },
+    "InternetGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "PrivateSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": {
+                "Ref": "AWS::Region"
+              }
+            }
+          ]
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "CidrBlock": {
+          "Ref": "PrivateSubnetACidrBlock"
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-subnet-private1-${AWS::Region}a"
+            }
+          }
+        ]
+      }
+    },
+    "PrivateSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": {
+                "Ref": "AWS::Region"
+              }
+            }
+          ]
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "CidrBlock": {
+          "Ref": "PrivateSubnetBCidrBlock"
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-subnet-private1-${AWS::Region}b"
+            }
+          }
+        ]
+      }
+    },
+    "PublicSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": {
+                "Ref": "AWS::Region"
+              }
+            }
+          ]
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "CidrBlock": {
+          "Ref": "PublicSubnetACidrBlock"
+        },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-subnet-public1-${AWS::Region}a"
+            }
+          }
+        ]
+      }
+    },
+    "PublicSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": {
+                "Ref": "AWS::Region"
+              }
+            }
+          ]
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "CidrBlock": {
+          "Ref": "PublicSubnetBCidrBlock"
+        },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-subnet-public1-${AWS::Region}b"
+            }
+          }
+        ]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-rtb-public"
+            }
+          }
+        ]
+      }
+    },
+    "PrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-odoo-rtb-private"
+            }
+          }
+        ]
+      }
+    },
+    "DefaultPublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "InternetGatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicSubnetARouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnetA"
+        }
+      }
+    },
+    "PublicSubnetBRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnetB"
+        }
+      }
+    },
+    "PrivateSubnetARouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnetA"
+        }
+      }
+    },
+    "PrivateSubnetBRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnetB"
+        }
+      }
+    },
+    "SGCodebuildSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "CodebuildTraffic",
+        "GroupName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-sg-codebuild-odoo-${OdooEdition}"
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+   
+    "FargateCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-cluster-odoo-${OdooEdition}"
+        }
+      }
+    },
+    "ECSTaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-ECS-Role-TaskExecution"
+        },
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+        ]
+      }
+    },
+    "AutoScalingRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-ECS-Role-AutoScalingRole"
+        },
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole"
+        ]
+      }
+    },
+    "ContainerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-sg-containers"
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": -1,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "ECSTaskVpcCIDRSecurityGroupIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "ContainerSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "ContainerSecurityGroup"
+        },
+        "IpProtocol": "-1",
+        "CidrIp": {
+          "Ref": "VpcCidrBlock"
+        }
+      }
+    },
+    "AlbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-sg-alb"
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": -1,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "ALBHttpAllSecurityGroupIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "AlbSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "AlbSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": "80",
+        "ToPort": "80",
+        "CidrIp": "0.0.0.0/0"
+      }
+    },
+     "ALBHttpAllSecurityGroupIngressHttps": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "AlbSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "AlbSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": "443",
+        "ToPort": "443",
+        "CidrIp": "0.0.0.0/0"
+      }
+    },
+    "ApplicationLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "DependsOn": "InternetGatewayAttachment",
+      "Properties": {
+        "IpAddressType": "ipv4",
+        "Name": { "Fn::Sub": "${NombreProyectoEmpresa}-odoo-${OdooEdition}" },
+        "Scheme": "internet-facing",
+        "SecurityGroups": [
+          {
+            "Ref": "AlbSecurityGroup"
+          }
+        ],
+        "Subnets": [
+          {
+            "Ref": "PublicSubnetA"
+          },
+          {
+            "Ref": "PublicSubnetB"
+          }
+        ],
+        "Type": "application",
+        "LoadBalancerAttributes": [
+                {
+                    "Key": "idle_timeout.timeout_seconds",
+                    "Value": 3600
+                }
+        ]
+      }
+    },
+    "RDSSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-subnetgroup"
+        },
+        "DBSubnetGroupDescription": "Subnet Group",
+        "SubnetIds": [
+          {
+            "Ref": "PrivateSubnetA"
+          },
+          {
+            "Ref": "PrivateSubnetB"
+          }
+        ]
+      }
+    },
+    "InstanceSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-Odoo-DB"
+        },
+        "GroupDescription": "RDS traffic",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "InstanceSecurityGroupIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "InstanceSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "InstanceSecurityGroup"
+        },
+        "IpProtocol": "-1",
+        "CidrIp": {
+          "Ref": "VpcCidrBlock"
+        }
+      }
+    },
+    "RDSInstance": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "AllocatedStorage": "20",
+        "StorageType":"gp3",
+        "Engine": "postgres",
+        "DBInstanceClass": {
+          "Ref": "DatabaseInstanceType"
+        },
+        "DBSubnetGroupName": {
+          "Ref": "RDSSubnetGroup"
+        },
+        "MasterUsername": {
+          "Ref": "DBUsername"
+        },
+        "MultiAZ": {
+          "Ref": "RDSMultiAZ"
+        },
+        "MasterUserPassword": {
+          "Ref": "DBPassword"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Ref": "InstanceSecurityGroup"
+          }
+        ]
+      }
+    },
+
+    "DBSecretProxyPwd": {
+        "Type": "AWS::SecretsManager::Secret",
+        "Condition": "UseRDSProxy",
+        "Properties": {
+          "Name": {
+            "Fn::Sub": "${NombreProyectoEmpresa}-odoo-secretproxy${OdooEdition}"
+          },
+          "SecretString": {
+            "Fn::Sub": [
+              "{\n  \"username\": \"${DBUsername}\",\n  \"password\": \"${DBPassword}\",\n  \"engine\": \"postgres\",\n  \"host\": \"${DBHost}\",\n  \"port\": 5432,\n  \"dbInstanceIdentifier\": \"${RDSInstance}\"\n}",
+              {
+                "DBHost": { "Fn::GetAtt": ["RDSInstance", "Endpoint.Address"] }
+              }
+            ]
+          }
+        }
+      },
+
+    "RDSProxyRole": {
+     "Type": "AWS::IAM::Role",
+     "Condition": "UseRDSProxy",
+      "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "rds.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      },
+      "Policies": [
+        {
+          "PolicyName": "RDSProxySecretsAccess", 
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "GetSecretValue",
+                "Effect": "Allow",
+                "Action": [
+                  "secretsmanager:GetSecretValue"
+                ],
+                "Resource": [
+                  { "Ref": "DBSecretProxyPwd" }  
+                ]
+              },
+              {
+                "Sid": "DecryptSecretValue",
+                "Effect": "Allow",
+                "Action": [
+                  "kms:Decrypt"
+                ],
+                "Resource": "*",
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "secretsmanager.${AWS::Region}.amazonaws.com"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+      }
+    },
+
+    "MyRDSProxy": {
+      "Type": "AWS::RDS::DBProxy",
+      "Condition": "UseRDSProxy",
+      "Properties": {
+        "DBProxyName": { "Fn::Sub": "${NombreProyectoEmpresa}-my-rds-proxy" },
+        "DefaultAuthScheme":"NONE",
+        "EngineFamily": "POSTGRESQL",
+        "RoleArn": { "Fn::GetAtt": ["RDSProxyRole", "Arn"] },
+        "VpcSubnetIds": [
+          { "Ref": "PrivateSubnetA" },
+          { "Ref": "PrivateSubnetB" }
+        ],
+        "VpcSecurityGroupIds": [
+          { "Ref": "InstanceSecurityGroup" }
+        ],
+        "RequireTLS": true,
+        "IdleClientTimeout": 1800,
+        "Auth": [
+              {
+                "AuthScheme": "SECRETS",
+                "ClientPasswordAuthType": "POSTGRES_SCRAM_SHA_256",
+                "IAMAuth": "DISABLED",
+                "SecretArn": { "Ref": "DBSecretProxyPwd" }
+              }
+            ]
+          }
+    },
+
+    "MyRDSProxyTargetGroup": {
+      "Type": "AWS::RDS::DBProxyTargetGroup",
+      "Condition": "UseRDSProxy",
+      "Properties": {
+        "DBProxyName": { "Ref": "MyRDSProxy" },
+        "TargetGroupName": "default",
+        "DBInstanceIdentifiers": [
+          { "Ref": "RDSInstance" }
+        ],
+        "ConnectionPoolConfigurationInfo": {
+          "MaxConnectionsPercent": 100,
+          "ConnectionBorrowTimeout": 60
+        }
+      }
+    },
+
+    "EfsSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-sg-efs"
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": -1,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "EfsPortSecurityGroupIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "EfsSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "EfsSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": "2049",
+        "ToPort": "2049",
+        "CidrIp": {
+          "Ref": "VpcCidrBlock"
+        }
+      }
+    },
+    "FileSystemResource": {
+      "Type": "AWS::EFS::FileSystem",
+      "Properties": {
+        "PerformanceMode":"generalPurpose",
+        "ThroughputMode":"bursting",
+        "LifecyclePolicies": [
+          {
+            "TransitionToIA": "AFTER_30_DAYS"
+          },
+          {
+            "TransitionToPrimaryStorageClass": "AFTER_1_ACCESS"
+          }
+        ],
+        "Encrypted": true,
+        "FileSystemTags": [
+          {
+            "Key": "Name",
+            "Value": { "Fn::Sub": "${NombreProyectoEmpresa}-efs-odoo-data-${OdooEdition}" }
+          }
+        ],
+        "BackupPolicy": {
+          "Status": "ENABLED"
+        }
+      }
+    },
+    "EFSAccesPointDatos": {
+      "Type": "AWS::EFS::AccessPoint",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "FileSystemResource"
+        },
+        "PosixUser": {
+          "Uid": "0",
+          "Gid": "0"
+        },
+        "RootDirectory": {
+          "CreationInfo": {
+            "OwnerGid": "0",
+            "OwnerUid": "0",
+            "Permissions": "0777"
+          },
+          "Path": "/datos"
+        }
+      }
+    },
+    "EFSAccesPointCodigo": {
+      "Type": "AWS::EFS::AccessPoint",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "FileSystemResource"
+        },
+        "PosixUser": {
+          "Uid": "0",
+          "Gid": "0"
+        },
+        "RootDirectory": {
+          "CreationInfo": {
+            "OwnerGid": "0",
+            "OwnerUid": "0",
+            "Permissions": "0777"
+          },
+          "Path": "/codigo"
+        }
+      }
+    },
+    "EFSAccesPointConfig": {
+      "Type": "AWS::EFS::AccessPoint",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "FileSystemResource"
+        },
+        "PosixUser": {
+          "Uid": "0",
+          "Gid": "0"
+        },
+        "RootDirectory": {
+          "CreationInfo": {
+            "OwnerGid": "0",
+            "OwnerUid": "0",
+            "Permissions": "0777"
+          },
+          "Path": "/config"
+        }
+      }
+    },
+    "MountTargetResource1B": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "FileSystemResource"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnetB"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "EfsSecurityGroup"
+          }
+        ]
+      }
+    },
+    "MountTargetResource1A": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {
+          "Ref": "FileSystemResource"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnetA"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "EfsSecurityGroup"
+          }
+        ]
+      }
+    },
+
+     "MyCodeBuildProjectDockerECROdoo": {
+      "Type": "AWS::CodeBuild::Project",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-odoo-ecr-${OdooEdition}"
+        },
+        "ServiceRole": {
+          "Fn::GetAtt": ["CodeBuildServiceRoleDockerECROdoo", "Arn"]
+        },
+        "Artifacts": {
+          "Type": "CODEPIPELINE"
+        },
+        "Environment": {
+          "Type": "ARM_CONTAINER",
+          "ComputeType": "BUILD_GENERAL1_SMALL",
+          "Image": "aws/codebuild/amazonlinux2-aarch64-standard:3.0",
+          "PrivilegedMode": true,
+          "EnvironmentVariables": [
+            {
+              "Name": "AWS_DEFAULT_REGION",
+              "Value": {
+                "Ref": "AWS::Region"
+              }
+            },
+            {
+              "Name": "AWS_ACCOUNT_ID",
+              "Value": {
+                "Ref": "AWS::AccountId"
+              }
+            },
+            {
+              "Name": "IMAGE_REPO_NAME",
+              "Value": {
+                "Fn::Sub": "${NombreProyectoEmpresa}-odoo-${OdooVersion}-${OdooEdition}"
+              }
+            },
+            {
+              "Name": "CONTAINER_NAME",
+              "Value": {
+                "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}"
+              }
+            },
+            {
+              "Name": "IMAGE_TAG",
+              "Value": "latest"
+            },
+            {
+              "Name": "ODOO_VERSION",
+              "Value": {
+                "Ref": "OdooVersion"
+              }
+            },
+            {
+              "Name": "ODOO_RELEASE",
+              "Value": {
+                "Ref": "OdooRelease"
+              }
+            },
+            {
+              "Name": "ODOO_EDITION",
+              "Value": {
+                "Ref": "OdooEdition"
+              }
+            },
+            {
+              "Name": "DOCKERHUB_LOGIN",
+              "Value": {
+                "Ref": "DockerHubName"
+              }
+            },
+            {
+              "Name": "DOCKERHUB_PASSWORD",
+              "Value": {
+                "Ref": "DockerhubPassword"
+              }
+            }
+          ]
+        },
+        "VpcConfig": {
+          "SecurityGroupIds": [
+            {
+              "Ref": "SGCodebuildSecurityGroup"
+            }
+          ],
+          "Subnets": [
+            {
+              "Ref": "PrivateSubnetB"
+            },
+            {
+              "Ref": "PrivateSubnetA"
+            }
+          ],
+          "VpcId": {
+            "Ref": "VPC"
+          }
+        },
+        "FileSystemLocations": [
+          {
+            "Type": "EFS",
+            "Identifier": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-ecr-efsconf"
+            },
+            "Location": {
+              "Fn::Sub": "${FileSystemResource}.efs.${AWS::Region}.amazonaws.com:/"
+            },
+            "MountPoint": "/mnt/efs"
+          }
+        ],
+        "Source": {
+          "Type": "CODEPIPELINE"
+        }
+      }
+    },
+
+    "MyCodePipelineDockerECROdoo": {
+      "Type": "AWS::CodePipeline::Pipeline",
+      "DependsOn": "OdooTaskDefinition",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-odoo-image-ecr-${OdooEdition}"
+        },
+        "RoleArn": {
+          "Fn::GetAtt": ["CodePipelineServiceRoleDockerECR", "Arn"]
+        },
+        "ArtifactStore": {
+          "Type": "S3",
+          "Location": {
+            "Ref": "PipelineArtifactBucketDockerOdooECR"
+          }
+        },
+        "Stages": [
+          {
+            "Name": "Source",
+            "Actions": [
+              {
+                "Name": "GitHub_Source",
+                "ActionTypeId": {
+                  "Category": "Source",
+                  "Owner": "AWS",
+                  "Version": "1",
+                  "Provider": "CodeStarSourceConnection"
+                },
+                "OutputArtifacts": [
+                  {
+                    "Name": "SourceArtifact"
+                  }
+                ],
+                "Configuration": {
+                  "ConnectionArn": {
+                    "Ref": "MyConnectionGitDockerECR"
+                  },
+                  "FullRepositoryId": {
+                    "Ref": "GitHubRepoIdDockerOdooECR"
+                  },
+                  "BranchName": {
+                    "Ref": "GitHubBranchDockerOdooECR"
+                  }
+                },
+                "RunOrder": 1
+              }
+            ]
+          },
+          {
+            "Name": "Build",
+            "Actions": [
+              {
+                "Name": "DockerBuild",
+                "ActionTypeId": {
+                  "Category": "Build",
+                  "Owner": "AWS",
+                  "Version": "1",
+                  "Provider": "CodeBuild"
+                },
+                "InputArtifacts": [
+                  {
+                    "Name": "SourceArtifact"
+                  }
+                ],
+                "OutputArtifacts": [
+                  {
+                    "Name": "BuildArtifact"
+                  }
+                ],
+                "Configuration": {
+                  "ProjectName": {
+                    "Ref": "MyCodeBuildProjectDockerECROdoo"
+                  }
+                },
+                "RunOrder": 1
+              }
+            ]
+          },
+          {
+            "Name": "Deploy",
+            "Actions": [
+              {
+                "Name": "DeployToECS",
+                "ActionTypeId": {
+                  "Category": "Deploy",
+                  "Owner": "AWS",
+                  "Version": "1",
+                  "Provider": "ECS"
+                },
+                "InputArtifacts": [
+                  {
+                    "Name": "BuildArtifact"
+                  }
+                ],
+                "Configuration": {
+                  "ClusterName": { "Fn::Sub": "${NombreProyectoEmpresa}-cluster-odoo-${OdooEdition}"  },
+                  "ServiceName": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+                  "FileName": "imagedefinitions.json"
+                },
+                "RunOrder": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+
+    "NATGatewayEFSCodebuild": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "NATGatewayEIPEFS",
+            "AllocationId"
+          ]
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnetA"
+        }
+      }
+    },
+
+    "RouteNATGatewayEFSCodebuild": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": {
+          "Ref": "NATGatewayEFSCodebuild"
+        }
+      }
+    },
+    "CodeBuildServiceRoleEFSAddons": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codebuild.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonElasticFileSystemFullAccess",
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+          "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+          "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+        ]
+      }
+    },
+    "MyCodeBuildProjectEfsAddons": {
+      "Type": "AWS::CodeBuild::Project",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-odoo-rsync-efs-addons"
+        },
+        "ServiceRole": {
+          "Fn::GetAtt": [
+            "CodeBuildServiceRoleEFSAddons",
+            "Arn"
+          ]
+        },
+        "Artifacts": {
+          "Type": "CODEPIPELINE"
+        },
+        "Environment": {
+          "Type": "LINUX_CONTAINER",
+          "ComputeType": "BUILD_GENERAL1_SMALL",
+          "Image": "aws/codebuild/amazonlinux-x86_64-standard:5.0",
+          "PrivilegedMode": true,
+          "EnvironmentVariables": [
+            {
+              "Name": "AWS_DEFAULT_REGION",
+              "Value": {
+                "Ref": "AWS::Region"
+              }
+            },
+            {
+              "Name": "AWS_ACCOUNT_ID",
+              "Value": {
+                "Ref": "AWS::AccountId"
+              }
+            },
+            {
+              "Name": "IMAGE_REPO_NAME",
+              "Value": { "Fn::Sub": "${NombreProyectoEmpresa}-odoo-${OdooVersion}-${OdooEdition}" }
+            },
+            {
+              "Name": "CONTAINER_NAME",
+              "Value": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" }
+            },
+            {
+              "Name": "IMAGE_TAG",
+              "Value": "latest"
+            }
+          ]
+        },
+        "VpcConfig": {
+          "SecurityGroupIds": [
+            {
+              "Ref": "SGCodebuildSecurityGroup"
+            }
+          ],
+          "Subnets": [
+            {
+              "Ref": "PrivateSubnetB"
+            },
+             {
+              "Ref": "PrivateSubnetA"
+            }
+          ],
+          "VpcId": {
+            "Ref": "VPC"
+          }
+        },
+        "FileSystemLocations": [
+          {
+            "Type": "EFS",
+            "Identifier": {
+              "Fn::Sub": "${NombreProyectoEmpresa}-efs-addons"
+            },
+            "Location": {
+              "Fn::Sub": "${FileSystemResource}.efs.${AWS::Region}.amazonaws.com:/"
+            },
+            "MountPoint": "/mnt/efs"
+          }
+        ],
+        "Source": {
+          "Type": "CODEPIPELINE",
+          "BuildSpec": {
+            "Fn::Sub": "version: 0.2\n\nphases:\n  pre_build:\n    commands:\n      - echo \"Preparando directorio de EFS\"\n      - ls /mnt/efs\n  build:\n    commands:\n      - echo \"Copiando archivos del repo a EFS\"\n      - rsync -av --delete $CODEBUILD_SRC_DIR/ /mnt/efs/codigo\n  post_build:\n    commands:\n      - echo \"Build completado\"\n      - ls -l /mnt/efs\n      - printf '[{\"name\":\"%s\",\"imageUri\":\"%s\"}]' \"$CONTAINER_NAME\" \"$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG\" > imagedefinitions.json\n\nartifacts:\n  files: imagedefinitions.json\n"
+          }
+        }
+      }
+    },
+     "CodePipelineServiceRoleEfsAddons": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codepipeline.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess",
+          "arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess",
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+          "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "AllowCodeStarConnection",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "codestar-connections:UseConnection"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "MyCodePipelineEfsAddons": {
+      "Type": "AWS::CodePipeline::Pipeline",
+      "DependsOn": "OdooTaskDefinition",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${NombreProyectoEmpresa}-odoo-efs-addons-${OdooEdition}"
+        },
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "CodePipelineServiceRoleEfsAddons",
+            "Arn"
+          ]
+        },
+        "ArtifactStore": {
+          "Type": "S3",
+          "Location": {
+            "Ref": "PipelineArtifactBucketAddonsOdoo"
+          }
+        },
+        "Stages": [
+          {
+            "Name": "Source",
+            "Actions": [
+              {
+                "Name": "GitHub_Source",
+                "ActionTypeId": {
+                  "Category": "Source",
+                  "Owner": "AWS",
+                  "Version": "1",
+                  "Provider": "CodeStarSourceConnection"
+                },
+                "OutputArtifacts": [
+                  {
+                    "Name": "SourceArtifact"
+                  }
+                ],
+                "Configuration": {
+                  "ConnectionArn": {
+                    "Ref": "MyConnectionGitAddons"
+                  },
+                  "FullRepositoryId": {
+                    "Ref": "GitHubRepoIdAddonsOdoo"
+                  },
+                  "BranchName": {
+                    "Ref": "GitHubBranchAddonsOdoo"
+                  }
+                },
+                "RunOrder": 1
+              }
+            ]
+          },
+          {
+            "Name": "Build",
+            "Actions": [
+              {
+                "Name": "CopyToEFS",
+                "ActionTypeId": {
+                  "Category": "Build",
+                  "Owner": "AWS",
+                  "Version": "1",
+                  "Provider": "CodeBuild"
+                },
+                "InputArtifacts": [
+                  {
+                    "Name": "SourceArtifact"
+                  }
+                ],
+                "OutputArtifacts": [
+                  {
+                    "Name": "BuildArtifact"
+                  }
+                ],
+                "Configuration": {
+                  "ProjectName": {
+                    "Ref": "MyCodeBuildProjectEfsAddons"
+                  }
+                },
+                "RunOrder": 1
+              }
+            ]
+          },
+          {
+            "Name": "Deploy",
+            "Actions": [
+              {
+                "Name": "DeployToECS",
+                "ActionTypeId": {
+                  "Category": "Deploy",
+                  "Owner": "AWS",
+                  "Version": "1",
+                  "Provider": "ECS"
+                },
+                "InputArtifacts": [
+                  {
+                    "Name": "BuildArtifact"
+                  }
+                ],
+                "Configuration": {
+                  "ClusterName": { "Fn::Sub": "${NombreProyectoEmpresa}-cluster-odoo-${OdooEdition}"  },
+                  "ServiceName": { "Fn::Sub": "${NombreProyectoEmpresa}-services-odoo-${OdooEdition}" },
+                  "FileName": "imagedefinitions.json"
+                },
+                "RunOrder": 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+  },
+  "Outputs": {
+    "RDSdbEndpoint": {
+      "Description": "Endpoint for my RDS Instance",
+      "Value": {
+        "Fn::GetAtt": [
+          "RDSInstance",
+          "Endpoint.Address"
+        ]
+      }
+    },
+    "VpcId": {
+      "Description": "Id de la vpc",
+      "Value": {
+        "Ref": "VPC"
+      }
+    },
+    "ECSTaskRoleId": {
+      "Description": "Rol de ejecucion de tareas",
+      "Value": {
+        "Ref": "ECSTaskExecutionRole"
+      }
+    },
+    "AutoScalingRoleArn": {
+      "Description": "Rol de ejecucion de tareas",
+      "Value": {
+        "Fn::GetAtt": [
+          "AutoScalingRole",
+          "Arn"
+        ]
+      }
+    },
+    "ContainerSecurityGroupId": {
+      "Description": "grupo de seguridad del contenedor",
+      "Value": {
+        "Ref": "ContainerSecurityGroup"
+      }
+    },
+    "FargateClusterId": {
+      "Description": "Cluster de fargates",
+      "Value": {
+        "Ref": "FargateCluster"
+      }
+    },
+    "TaskDefinition": {
+      "Description": "The created Taskdefinition.",
+      "Value": {
+        "Ref": "OdooTaskDefinition"
+      }
+    },
+    "SubnetList": {
+      "Description": "Lista de subredes",
+      "Value": {
+        "Fn::Join": [
+          ",",
+          [
+            {
+              "Ref": "PrivateSubnetA"
+            },
+            {
+              "Ref": "PrivateSubnetB"
+            },
+            {
+              "Ref": "PublicSubnetA"
+            },
+            {
+              "Ref": "PublicSubnetB"
+            }
+          ]
+        ]
+      }
+    }
+
+  }
+}

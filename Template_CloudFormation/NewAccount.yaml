@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Temporary Working Stack with Parameters"
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: "Correo electrónico que recibirá la alerta de facturación"
+  BillingThresholdUSD:
+    Type: Number
+    Default: 50
+    Description: "Monto en USD que activará la alarma de facturación"
+    MinValue: 1
+  AdminUserName:
+    Type: String
+    Default: "adminalquifinx"
+    Description: "Nombre del usuario administrador a crear"
+  AdminUserPassword:
+    Type: String
+    NoEcho: true
+    Description: "Contraseña del usuario administrador"
+    MinLength: 8
+  CloudTrailBucketName:
+    Type: String
+    Description: "Nombre único (a nivel global) para el bucket S3 de CloudTrail"
+
+Resources:
+  SnsTopicMetricFilterCloudWatchAlarm:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: "email"
+      TopicName: "alarm-action"
+
+  CloudWatchAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmName: "billing_alarm"
+      AlarmDescription: "Alarma que se activa cuando el consumo de AWS supera el umbral especificado."
+      MetricName: "EstimatedCharges"
+      Namespace: "AWS/Billing"
+      Statistic: "Maximum"
+      Period: 21600
+      EvaluationPeriods: 1
+      Threshold: !Ref BillingThresholdUSD
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+      AlarmActions:
+        - Ref: "SnsTopicMetricFilterCloudWatchAlarm"
+      Dimensions:
+        - Name: "Currency"
+          Value: "USD"
+
+  IamUser:
+    Type: "AWS::IAM::User"
+    Properties:
+      UserName: !Ref AdminUserName
+      Path: "/"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AdministratorAccess"
+      LoginProfile:
+        Password: !Ref AdminUserPassword
+        PasswordResetRequired: true
+
+  CWLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: "CloudTrailLogs"
+
+  S3BucketForCloudTrailCloudTrail:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Ref CloudTrailBucketName
+
+  S3BucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref S3BucketForCloudTrailCloudTrail
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "AWSCloudTrailBucketPermissionsCheck"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "cloudtrail.amazonaws.com"
+            Action: "s3:GetBucketAcl"
+            Resource: !GetAtt S3BucketForCloudTrailCloudTrail.Arn
+          - Sid: "AWSConfigBucketDelivery"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "cloudtrail.amazonaws.com"
+            Action: "s3:PutObject"
+            Resource: !Join
+              - ""
+              - 
+                - !GetAtt S3BucketForCloudTrailCloudTrail.Arn
+                - "/AWSLogs/*"
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: "bucket-owner-full-control"
+
+  IamRoleForCwLogsCloudTrail:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "allow-access-to-cw-logs"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+      RoleName: "CloudWatchRoleLogsTrail"
+
+  CloudTrail:
+    Type: "AWS::CloudTrail::Trail"
+    Properties:
+      TrailName: "ManagementEventsTrail"
+      IsLogging: true
+      EnableLogFileValidation: true
+      EventSelectors:
+        - IncludeManagementEvents: true
+          ReadWriteType: "All"
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      S3BucketName: !Ref S3BucketForCloudTrailCloudTrail
+      CloudWatchLogsLogGroupArn: !GetAtt CWLogGroup.Arn
+      CloudWatchLogsRoleArn: !GetAtt IamRoleForCwLogsCloudTrail.Arn
+    DependsOn: S3BucketPolicy
+
+Outputs:
+  SNSAlertEmail:
+    Description: "Email de alerta configurado"
+    Value: !Ref NotificationEmail
+  BillingThresholdValue:
+    Description: "Umbral configurado para la alarma de facturación"
+    Value: !Ref BillingThresholdUSD
+  AdminCreatedUser:
+    Description: "Usuario administrador creado"
+    Value: !Ref AdminUserName
+  CloudTrailBucket:
+    Description: "Bucket de CloudTrail configurado"
+    Value: !Ref CloudTrailBucketName
